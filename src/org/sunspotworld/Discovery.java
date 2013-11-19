@@ -98,6 +98,7 @@ public class Discovery extends MIDlet {
     private void recvLoop () {
         RadiogramConnection rcvConn = null;
         recvDo = true;
+        int count = 0;
         
         while (recvDo) {
             try {
@@ -105,16 +106,31 @@ public class Discovery extends MIDlet {
                 rcvConn.setTimeout(PACKET_INTERVAL - 5);
                 Radiogram rdg = (Radiogram)rcvConn.newDatagram(rcvConn.getMaximumLength());
                 
-                while (recvDo) {
+                /*for 9 out of 10 loops we look for leader's message
+                 * on 10th loop look for a new leader
+                 */
+                while (count < 8) {
                     try {
                         rdg.reset();
                         rcvConn.receive(rdg);           // listen for a packet
                         
+                        /*we have a known leader*/
+                        if (leaderSet == true)
+                        {
+                            /*we found the leaders message*/
+                            if (rdg.readLong() == leader)
+                            {
+                                rdg.readBoolean(); //read whether they should lock to leader's position
+                            }
+                        }
+                        count++;
                             
                     } catch (TimeoutException tex) {        // timeout - display no packet received
                         statusLED.setColor(red);
                     }
                 }
+                findLeader(rcvConn, rdg);
+                count = 0;
             } catch (IOException ex) {
                 
             } finally {
@@ -127,8 +143,45 @@ public class Discovery extends MIDlet {
         }
     }
     
+    /*look for leader helper function
+     * looks through 10 messages and finds the highest mac address
+     * assumes this is the leader
+     * if no mac address is higher than it's own it is the leader
+     */
+    private void findLeader(RadiogramConnection rConn, Radiogram rdg) throws IOException
+    {
+        int count = 0;
+        long max = 0;
+        
+        while (count < 10)
+        {
+            rdg.reset();
+            rConn.receive(rdg);
+            long receivedAddress = rdg.readLong();
+            boolean receivedBool = rdg.readBoolean();
+            if (receivedAddress > max)
+            {
+                max = receivedAddress;
+            }
+            
+            count++;
+        }
+        
+        if (max > myAddr)
+        {
+            leaderSet = true;
+            leader = max;
+        }
+        else
+        {
+            /*I am the leader*/
+            leaderSet = false;
+        }
+    }
+        
     
     
+  
     /**
      * Pause for a specified time.
      *
