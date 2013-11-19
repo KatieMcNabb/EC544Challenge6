@@ -46,7 +46,10 @@ public class Discovery extends MIDlet {
     private ITriColorLEDArray leds = (ITriColorLEDArray)Resources.lookup(ITriColorLEDArray.class);
     private ITriColorLED statusLED = leds.getLED(0);
 
-    private LEDColor red = new LEDColor(0,0,50);
+    private LEDColor red = new LEDColor(255,0,0);
+    private LEDColor blue = new LEDColor(0,0,255);
+    private LEDColor green = new LEDColor(0,255,0);
+    
     
     private boolean xmitDo = true;
     private boolean recvDo = true;
@@ -55,11 +58,13 @@ public class Discovery extends MIDlet {
     private long leader = 0;  // leader MAC addr 
     private boolean leaderSet = false;
     private long TimeStamp;
+    private boolean leaderCommand = false; // can be used to send message to other spots to lock or not
    
    
      /**
      * Loop to continually broadcast message.
-     * message format
+     * message format myaddr(long), leaderCommand(bool) -- leaderCommand always false if not leader
+     * 
      */
         private void xmitLoop () {
         
@@ -73,7 +78,27 @@ public class Discovery extends MIDlet {
                 txConn.setMaxBroadcastHops(1);      // don't want packets being rebroadcasted
                 Datagram xdg = txConn.newDatagram(txConn.getMaximumLength());
                 while (xmitDo) {
+                    xdg.reset();
                     
+                    /* if you are the leader transit address and leader command*/
+                    if (leaderSet == false)
+                    {
+                        leds.getLED(5).setColor(green);
+                        leds.setOn();
+                        xdg.writeLong(myAddr);
+                        xdg.writeBoolean(leaderCommand);
+                        txConn.send(xdg);
+                        System.out.println("I am the leader and my address is " + myAddr);
+                    }
+                    /*if there is a leader just send message and transmit a false boolean*/
+                    else
+                    {
+                        leds.getLED(5).setColor(red);
+                        leds.setOn();
+                        xdg.writeLong(myAddr);
+                        xdg.writeBoolean(false);
+                        txConn.send(xdg);
+                    }
                     /*pause*/
                     long delay = (TimeStamp+ PACKET_INTERVAL- System.currentTimeMillis()) - 2;
                     if (delay > 0) {
@@ -99,8 +124,8 @@ public class Discovery extends MIDlet {
         RadiogramConnection rcvConn = null;
         recvDo = true;
         int count = 0;
-        
         while (recvDo) {
+            
             try {
                 rcvConn = (RadiogramConnection)Connector.open("radiogram://:" + BROADCAST_PORT);
                 rcvConn.setTimeout(PACKET_INTERVAL - 5);
@@ -113,20 +138,30 @@ public class Discovery extends MIDlet {
                     try {
                         rdg.reset();
                         rcvConn.receive(rdg);           // listen for a packet
+                        leds.getLED(1).setOff();
                         
                         /*we have a known leader*/
                         if (leaderSet == true)
                         {
+                            System.out.println("leader is set and its address is " + leader);
                             /*we found the leaders message*/
                             if (rdg.readLong() == leader)
                             {
+                                leds.getLED(1).setColor(green);
+                                leds.getLED(1).setOn();
                                 rdg.readBoolean(); //read whether they should lock to leader's position
                             }
+                        }
+                        else
+                        {
+                            System.out.println("no leader");
+                            leds.getLED(1).setOff();
                         }
                         count++;
                             
                     } catch (TimeoutException tex) {        // timeout - display no packet received
-                        statusLED.setColor(red);
+                        leds.getLED(1).setColor(blue);
+                        leds.getLED(1).setOn();
                     }
                 }
                 findLeader(rcvConn, rdg);
@@ -150,6 +185,7 @@ public class Discovery extends MIDlet {
      */
     private void findLeader(RadiogramConnection rConn, Radiogram rdg) throws IOException
     {
+        System.out.println("finding a leader");
         int count = 0;
         long max = 0;
         
@@ -159,6 +195,9 @@ public class Discovery extends MIDlet {
             rConn.receive(rdg);
             long receivedAddress = rdg.readLong();
             boolean receivedBool = rdg.readBoolean();
+            
+            System.out.println("received address is " + receivedAddress);
+            System.out.println("max is " + max);
             if (receivedAddress > max)
             {
                 max = receivedAddress;
@@ -167,6 +206,7 @@ public class Discovery extends MIDlet {
             count++;
         }
         
+        System.out.println("After loop max is " + max);
         if (max > myAddr)
         {
             leaderSet = true;
@@ -199,8 +239,6 @@ public class Discovery extends MIDlet {
      */
     private void initialize() { 
         myAddr = RadioFactory.getRadioPolicyManager().getIEEEAddress();
-        statusLED.setColor(red);     // Red = not active
-        statusLED.setOn();
         IRadioPolicyManager rpm = Spot.getInstance().getRadioPolicyManager();
         rpm.setChannelNumber(channel);
         rpm.setPanId(PAN_ID);
